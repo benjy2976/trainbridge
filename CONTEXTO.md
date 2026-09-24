@@ -49,7 +49,7 @@ del contexto local).
 
 En el NUC (`vision-training/deteccion-objetos/`, código versionado; los
 datos que produce ni viven dentro del repo, están en
-`/home/benjy/vision-training-data/deteccion-objetos/`, porque contienen
+`/srv/vision-training-data/deteccion-objetos/`, porque contienen
 imágenes reales de la vivienda -- ver ADR-0028):
 
 1. `harvest.py` descarga eventos ya grabados por Frigate y saca hasta 3
@@ -85,7 +85,7 @@ en vez de correr los scripts a mano en cada ciclo, es un worker que hace
 polling al NUC por trabajos encolados desde un botón en la herramienta web
 -- cualquier equipo que lo tenga corriendo puede tomar el próximo trabajo,
 como un "vientre de alquiler" intercambiable. Ver
-[ADR-0029](../../docs/decisions/0029-cola-de-trabajos-entrenamiento-remoto.md).
+[el contexto normativo local](context.md#estados-emitidos-y-flujo).
 
 ## Qué NO resuelve este proyecto (todavía)
 

@@ -1,9 +1,30 @@
-# Proyecto de entrenamiento: detector propio para Frigate
+# TrainBridge
 
-Reemplaza `ssdlite_mobilenet_v2` (el modelo por defecto de Frigate, que
-confunde al gato de canal_3 con una persona) por un YOLO afinado con
-imágenes reales de las 5 cámaras. Para el "por qué" completo (el problema
-diagnosticado, las alternativas descartadas, y por qué el flujo es
+Runner autohospedado para ejecutar trabajos de entrenamiento de machine
+learning en equipos remotos, con transferencia de datasets, seguimiento de
+progreso, validación, exportación y entrega de modelos.
+
+Actualmente TrainBridge funciona como un worker que consulta una cola HTTP y
+está especializado en detección de objetos con Ultralytics y exportación a
+OpenVINO. La dirección futura del proyecto es admitir también solicitudes
+directas mediante una API y otros tipos de trabajos de entrenamiento, sin
+quedar ligado a un proyecto consumidor concreto.
+
+## Documentación del proyecto
+
+- [Arquitectura](docs/arquitectura.md): componentes, fronteras y flujo global.
+- [Contexto funcional](context.md): estados, reglas y recuperación de trabajos.
+- [Entorno](docs/entorno.md) y [procedimientos](docs/procedimientos.md): preparación, ejecución y
+  validación.
+- [Contrato HTTP consumido](docs/api.md) y [contrato CLI](docs/cli.md): interfaces actuales.
+- [Guía para agentes](docs/guia_IA.md): índice de la memoria viva del repositorio.
+
+## Caso de uso actual: detector para Frigate
+
+La primera integración reemplaza `ssdlite_mobilenet_v2` (el modelo por defecto
+de Frigate, que confunde al gato de canal_3 con una persona) por un YOLO
+afinado con imágenes reales de las 5 cámaras. Para el "por qué" completo (el
+problema diagnosticado, las alternativas descartadas, y por qué el flujo es
 recursivo) ver [CONTEXTO.md](CONTEXTO.md) -- este README es solo el "cómo".
 
 Pensado para reutilizarse: cada campaña de entrenamiento (esta, y las
@@ -21,14 +42,13 @@ la herramienta de revisión en vez de correrse a mano en cada ronda (ver
 
 ## Dónde vive cada cosa
 
-- **NUC** (`vision-training/deteccion-objetos/`, este repo): recolección de
-  imágenes desde eventos de Frigate, revisión/corrección de etiquetas,
-  exportación del dataset final. El código está versionado; los datos que
-  produce (`salida/`, imágenes reales de la vivienda) ni siquiera viven
-  dentro del repo -- están en `/home/benjy/vision-training-data/deteccion-objetos/`
-  (ver ADR-0028).
-- **Este proyecto** (`proyecto_gpu/`, se copia entero a tu equipo con
-  GPU): entrenamiento, validación, exportación a OpenVINO. Recomendado
+- **NUC** (`vision-training/deteccion-objetos/`, dentro del proyecto
+  consumidor): recolección de imágenes desde eventos de Frigate,
+  revisión/corrección de etiquetas y exportación del dataset final. Los datos
+  producidos (`salida/`, imágenes reales de la vivienda) viven fuera del repo,
+  en `/srv/vision-training-data/deteccion-objetos/` (ver ADR-0028).
+- **TrainBridge** (`proyecto_gpu/` en su ubicación original, se copia entero al
+  equipo con GPU): entrenamiento, validación y exportación a OpenVINO. Recomendado
   convertirlo en su propio repo Git ahí (`git init`), separado del repo
   `smarthome` -- no es infraestructura del hogar, es un workspace de ML
   que consume datasets exportados desde el NUC.
@@ -75,31 +95,37 @@ vez, y lanzar el worker), cada uno con su versión bash y PowerShell.
 
 El código de recolección/revisión vive en `vision-training/deteccion-objetos/`
 (versionado); los datos (imágenes reales) viven aparte, fuera del repo, en
-`/home/benjy/vision-training-data/deteccion-objetos/` (ver ADR-0028). Ver el
+`/srv/vision-training-data/deteccion-objetos/` (ver ADR-0028). Ver el
 `README.md` de esa carpeta para el flujo de cosechar/revisar. Con eso
 hecho, dejar corriendo la herramienta de revisión:
 
 ```bash
 python3 vision-training/deteccion-objetos/herramienta_revision/review_server.py \
-  --dataset /home/benjy/vision-training-data/deteccion-objetos/salida \
+  --dataset /srv/vision-training-data/deteccion-objetos/salida \
   --host 0.0.0.0 --port 8850
 ```
 
 ### 2. En el equipo con GPU: copiar el proyecto (una sola vez)
 
 ```bash
-mkdir -p ~/smarthome-vision-training
+mkdir -p ~/trainbridge
 rsync -avz \
-  benjy@<ip-del-nuc>:/home/benjy/smarthome/vision-training/proyecto_gpu/ \
-  ~/smarthome-vision-training/
+  --exclude '.git/' \
+  --exclude '.venv/' \
+  --exclude '.env' \
+  --exclude 'datasets/*' \
+  --exclude 'runs/' \
+  --exclude 'modelos/' \
+  usuario@nuc:/ruta/a/trainbridge/ \
+  ~/trainbridge/
 
-cd ~/smarthome-vision-training
+cd ~/trainbridge
 git init   # opcional, si querés versionar scripts/README acá (el .gitignore ya excluye datasets/runs/modelos)
 ```
 
-Completar `.env` (copiar `.env.example` si `rsync` no trajo uno ya
-completado -- la IP del NUC y el token los imprime `review_server.py` al
-iniciar, y también quedan en `salida/.upload_token` en el NUC).
+Crear `.env` a partir de `.env.example` y completarlo localmente. La IP del NUC
+y el token los imprime `review_server.py` al iniciar; también quedan en
+`salida/.upload_token` en el NUC. `.env` contiene secretos y no se versiona.
 
 ### 3. En el equipo con GPU: instalar el entorno (una sola vez por equipo)
 
@@ -139,7 +165,7 @@ powershell -File scripts\windows\02_run_worker.ps1
 Queda corriendo en loop, haciendo *polling* al NUC cada pocos segundos
 preguntando si hay un entrenamiento encolado -- nunca al revés, el NUC no
 necesita poder conectarse a este equipo (ver
-[ADR-0029](../../docs/decisions/0029-cola-de-trabajos-entrenamiento-remoto.md)
+[CONTEXTO.md](CONTEXTO.md#el-flujo-recursivo-por-qué-esto-no-es-una-sola-corrida)
 para el porqué). Cualquier equipo con GPU disponible que tenga el worker
 corriendo puede tomar el próximo trabajo -- no hace falta que sea siempre
 el mismo ("vientre de alquiler"). Repetir los pasos 2-4 en cada equipo
@@ -204,8 +230,8 @@ Copiar el modelo recibido a su destino final (ya está en el mismo equipo,
 es un `cp` local, no hace falta red):
 
 ```bash
-cp -r /home/benjy/vision-training-data/deteccion-objetos/modelos_recibidos/deteccion-smarthome-v1/<timestamp> \
-  /home/benjy/smarthome/frigate/config/model_custom/deteccion-smarthome-v1
+cp -r /srv/vision-training-data/deteccion-objetos/modelos_recibidos/deteccion-smarthome-v1/<timestamp> \
+  /srv/frigate/config/model_custom/deteccion-smarthome-v1
 ```
 
 Editar `frigate/config/config.yml`: pegar el bloque `model:` que mostró la

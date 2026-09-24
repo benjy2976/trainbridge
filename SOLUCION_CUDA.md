@@ -41,7 +41,7 @@ compiladas para CUDA 12.8:
 --extra-index-url https://download.pytorch.org/whl/cu128
 torch==2.11.0+cu128
 torchvision==0.26.0+cu128
-ultralytics==8.3.40
+ultralytics==8.4.162
 ```
 
 La build CUDA 12.8 puede ejecutarse con el driver actual, que soporta CUDA

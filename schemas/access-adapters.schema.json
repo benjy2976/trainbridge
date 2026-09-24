@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ia-familiar.local/project-memory/access-adapters.schema.json",
+  "title": "Project memory static access adapters",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "rules"],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "symbol", "access", "evidence"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "symbol": {
+            "type": "string",
+            "pattern": "^[A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*$"
+          },
+          "access": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9:_-]*$"
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
