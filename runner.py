@@ -211,6 +211,66 @@ def subir_modelo(token, campana, modelo_dir):
         os.unlink(tmp_name)
 
 
+def exportar_y_subir(
+    modelo_val, token, campana, job_id, dataset_yaml, run_dir,
+    modelo_base, epocas_totales, map50, reutilizar_exportacion=False,
+):
+    """Completa el paquete OpenVINO, lo inspecciona y lo sube al NUC."""
+    reportar(token, job_id, estado="exportando", mensaje="exportando a OpenVINO")
+    origen_existente = run_dir / "weights" / "best_openvino_model"
+    if reutilizar_exportacion and origen_existente.is_dir():
+        origen = origen_existente
+        print(f"Reutilizando exportación OpenVINO existente: {origen}")
+    else:
+        origen = Path(modelo_val.export(format="openvino", imgsz=640))
+    if not origen.is_dir():
+        raise FileNotFoundError(f"la exportación OpenVINO no produjo un directorio: {origen}")
+
+    modelo_dir = EXPORTED_MODELS_DIR / campana / job_id
+    if modelo_dir.exists():
+        shutil.rmtree(modelo_dir)
+    modelo_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(origen, modelo_dir)
+
+    xml_exportados = list(modelo_dir.glob("*.xml"))
+    if len(xml_exportados) != 1:
+        raise RuntimeError(
+            f"se esperaba exactamente un .xml OpenVINO en {modelo_dir}; encontrados: {len(xml_exportados)}"
+        )
+
+    # Inspecciona el .xml recién exportado para saber con certeza el
+    # layout/dtype reales (los defaults de Frigate probablemente no
+    # coincidan con lo que ultralytics exportó) -- se incluye en el
+    # reporte final para no necesitar un paso manual aparte.
+    from inspect_model import inspeccionar, formatear_bloque_model
+    info = inspeccionar(xml_exportados[0])
+    bloque_model = formatear_bloque_model(campana, info)
+    clases = crear_labelmap(dataset_yaml, modelo_dir / "labels.txt")
+
+    metadata = {
+        "campana": campana,
+        "job_id": job_id,
+        "creado_utc": datetime.now(timezone.utc).isoformat(),
+        "modelo_base": Path(modelo_base).name,
+        "epocas_solicitadas": epocas_totales,
+        "map50": map50,
+        "dataset_yaml": str(dataset_yaml),
+        "run_dir": str(run_dir),
+        "openvino_xml": xml_exportados[0].name,
+        "clases": clases,
+    }
+    (modelo_dir / "metadata.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    reportar(token, job_id, estado="subiendo", mensaje="subiendo modelo al NUC")
+    subir_modelo(token, campana, modelo_dir)
+
+    mensaje_final = "listo" if map50 is None else f"listo -- mAP50={map50:.3f}"
+    reportar(token, job_id, estado="listo", mensaje=mensaje_final, detalle=bloque_model)
+
+
 def entrenar_job(job, token):
     # Import diferido: solo hace falta cuando hay un trabajo real, así el
     # worker arranca y hace polling incluso si algo del entorno de
@@ -259,54 +319,54 @@ def entrenar_job(job, token):
     except (AttributeError, TypeError):
         pass
 
-    reportar(token, job_id, estado="exportando", mensaje="exportando a OpenVINO")
-    origen = Path(modelo_val.export(format="openvino", imgsz=640))
-    if not origen.is_dir():
-        raise FileNotFoundError(f"la exportación OpenVINO no produjo un directorio: {origen}")
-
-    modelo_dir = EXPORTED_MODELS_DIR / campana / job_id
-    if modelo_dir.exists():
-        shutil.rmtree(modelo_dir)
-    modelo_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(origen, modelo_dir)
-
-    xml_exportados = list(modelo_dir.glob("*.xml"))
-    if len(xml_exportados) != 1:
-        raise RuntimeError(
-            f"se esperaba exactamente un .xml OpenVINO en {modelo_dir}; encontrados: {len(xml_exportados)}"
-        )
-
-    # Inspecciona el .xml recién exportado para saber con certeza el
-    # layout/dtype reales (los defaults de Frigate probablemente no
-    # coincidan con lo que ultralytics exportó) -- se incluye en el
-    # reporte final para no necesitar un paso manual aparte.
-    from inspect_model import inspeccionar, formatear_bloque_model
-    info = inspeccionar(xml_exportados[0])
-    bloque_model = formatear_bloque_model(campana, info)
-    clases = crear_labelmap(dataset_yaml, modelo_dir / "labels.txt")
-
-    metadata = {
-        "campana": campana,
-        "job_id": job_id,
-        "creado_utc": datetime.now(timezone.utc).isoformat(),
-        "modelo_base": modelo_base.name,
-        "epocas_solicitadas": epocas_totales,
-        "map50": map50,
-        "dataset_yaml": str(dataset_yaml),
-        "run_dir": str(run_dir),
-        "openvino_xml": xml_exportados[0].name,
-        "clases": clases,
-    }
-    (modelo_dir / "metadata.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    exportar_y_subir(
+        modelo_val, token, campana, job_id, dataset_yaml, run_dir,
+        modelo_base, epocas_totales, map50,
     )
 
-    reportar(token, job_id, estado="subiendo", mensaje="subiendo modelo al NUC")
-    subir_modelo(token, campana, modelo_dir)
 
-    mensaje_final = "listo" if map50 is None else f"listo -- mAP50={map50:.3f}"
-    reportar(token, job_id, estado="listo", mensaje=mensaje_final, detalle=bloque_model)
+def finalizar_job_existente(campana, job_id, token):
+    """Finaliza y sube un entrenamiento que ya produjo `best.pt`."""
+    from ultralytics import YOLO
+
+    campana = validar_segmento(campana, "campana")
+    job_id = validar_segmento(job_id, "job_id")
+    dataset_yaml = DATASETS_DIR / campana / job_id / "dataset.yaml"
+    run_dir = RUNS_DIR / campana / job_id
+    weights = run_dir / "weights" / "best.pt"
+    args_yaml = run_dir / "args.yaml"
+
+    if not dataset_yaml.is_file():
+        raise FileNotFoundError(f"no existe el dataset de la ejecución: {dataset_yaml}")
+    if not weights.is_file():
+        raise FileNotFoundError(f"no existe el mejor checkpoint: {weights}")
+
+    args = {}
+    if args_yaml.is_file():
+        args = yaml.safe_load(args_yaml.read_text(encoding="utf-8")) or {}
+    modelo_base = Path(args.get("model", "desconocido.pt")).name
+    epocas_totales = args.get("epochs")
+
+    reportar(
+        token, job_id, estado="validando",
+        mensaje="recuperando entrenamiento terminado y validando best.pt",
+    )
+    modelo_val = YOLO(str(weights))
+    metricas = modelo_val.val(
+        data=str(dataset_yaml), project=str(run_dir), name="validacion",
+        exist_ok=True,
+    )
+    map50 = None
+    try:
+        map50 = float(metricas.box.map50)
+    except (AttributeError, TypeError):
+        pass
+
+    exportar_y_subir(
+        modelo_val, token, campana, job_id, dataset_yaml, run_dir,
+        modelo_base, epocas_totales, map50, reutilizar_exportacion=True,
+    )
+    print(f"Trabajo {job_id} recuperado y subido correctamente.")
 
 
 def main():
@@ -319,6 +379,19 @@ def main():
     if not (ROOT / ".venv").exists():
         print("No existe .venv -- correr antes 01_setup_env (sh o ps1) al menos una vez.")
         sys.exit(1)
+
+    if len(sys.argv) > 1:
+        if len(sys.argv) != 4 or sys.argv[1] != "--finalizar-job":
+            print("Uso: runner.py --finalizar-job <campana> <job_id>")
+            sys.exit(2)
+        campana, job_id = sys.argv[2:]
+        try:
+            finalizar_job_existente(campana, job_id, token)
+        except Exception as exc:  # noqa: BLE001 -- debe quedar reportado en el NUC
+            print(f"! no se pudo finalizar el trabajo: {exc}")
+            reportar(token, job_id, estado="error", error=str(exc))
+            raise
+        return
 
     print(f"Worker escuchando trabajos en {url} (cada {POLL_SECONDS}s, Ctrl+C para parar)")
     while True:

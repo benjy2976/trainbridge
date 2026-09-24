@@ -6,6 +6,7 @@ torch==2.11.0+cu128
 torchvision==0.26.0+cu128
 numpy==2.5.3
 PyYAML==6.0.3
+openvino==2026.4.0
 
 # Fijar versión exacta: un cambio de versión de Ultralytics puede cambiar
 # cómo exporta a OpenVINO (nombres de tensores, layout por defecto) sin

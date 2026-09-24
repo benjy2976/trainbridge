@@ -145,6 +145,18 @@ corriendo puede tomar el próximo trabajo -- no hace falta que sea siempre
 el mismo ("vientre de alquiler"). Repetir los pasos 2-4 en cada equipo
 nuevo que se quiera sumar.
 
+Si un trabajo terminó de entrenar y exportar pero falló en el procesamiento o
+la subida final, se puede recuperar sin repetir las épocas:
+
+```bash
+.venv/bin/python runner.py --finalizar-job <campana> <job-id>
+```
+
+El comando exige que existan el dataset de esa ejecución y
+`runs/<campana>/<job-id>/weights/best.pt`. Repite solamente la validación de
+`best.pt`, reutiliza el OpenVINO existente si está disponible, completa el
+paquete, lo sube al NUC y actualiza el estado del trabajo a `listo`.
+
 ### 5. Encolar un entrenamiento
 
 En la herramienta de revisión (paso 1, corriendo en el NUC), pestaña

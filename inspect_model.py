@@ -19,7 +19,7 @@ import sys
 def inspeccionar(model_path):
     """Devuelve un dict con la forma/dtype/layout reales del .xml, y el
     bloque `model:` ya armado como texto para pegar en Frigate."""
-    from openvino.runtime import Core
+    from openvino import Core
 
     core = Core()
     modelo = core.read_model(str(model_path))
