@@ -1,0 +1,14 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Datos y artefactos generados. El README de datasets sí se versiona.
+datasets/*
+!datasets/README.md
+runs/
+modelos/
+
+# Compatibilidad con pesos descargados por versiones antiguas del worker.
+*.pt

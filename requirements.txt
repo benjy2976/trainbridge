@@ -1,0 +1,14 @@
+# PyTorch debe instalarse desde su índice CUDA oficial. No quitar estos pines:
+# sin ellos, la dependencia abierta de Ultralytics puede seleccionar una build
+# de PyTorch para una versión de CUDA que el driver NVIDIA no soporte.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+numpy==2.5.3
+PyYAML==6.0.3
+
+# Fijar versión exacta: un cambio de versión de Ultralytics puede cambiar
+# cómo exporta a OpenVINO (nombres de tensores, layout por defecto) sin
+# avisar. Si se actualiza a propósito, volver a inspeccionar el modelo y revisar
+# la configuración de Frigate en el NUC.
+ultralytics==8.4.162
